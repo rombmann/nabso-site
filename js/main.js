@@ -29,7 +29,7 @@
 
     var btn = document.createElement("button");
     btn.type = "button";
-    btn.textContent = ch.querySelector(".ss__title").textContent.replace(".", "");
+    btn.textContent = ch.getAttribute("data-label");
     btn.addEventListener("click", function () {
       window.scrollTo({ top: ch.offsetTop + root.offsetTop, behavior: reduced ? "auto" : "smooth" });
     });
@@ -38,9 +38,70 @@
     layers.push({ el: layer, ch: ch, btn: btn, src: "assets/world/scene-0" + n + suffix + ".mp4", video: null, target: 0 });
   });
 
-  // Vidéos chargées en mémoire (blob) pour un défilement avant/arrière fluide.
+  // Sur téléphone, une vidéo ne se « rembobine » pas assez vite pour suivre le doigt :
+  // on dessine à la place une suite d'images (assets/frames) sur un canvas, avec amorti.
+  var canvasMode = mobile && !reduced;
+  // Plage d'images (f001 = index 0) couverte par chaque chapitre.
+  var RANGES = [[0, 45], [45, 90], [91, 124], [125, 180]];
+  var FRAME_COUNT = 181;
+  var frameTarget = 0;
+
+  if (canvasMode) {
+    var canvas = document.createElement("canvas");
+    canvas.className = "ss__canvas";
+    media.appendChild(canvas);
+    var ctx = canvas.getContext("2d");
+    var frames = new Array(FRAME_COUNT);
+    var current = 0, drawn = -1;
+
+    var load = function (i) {
+      if (frames[i]) return;
+      var img = new Image();
+      img.decoding = "async";
+      img.onload = function () { img.ready = true; drawn = -1; };
+      img.src = "assets/frames/f" + String(i + 1).padStart(3, "0") + ".webp";
+      frames[i] = img;
+    };
+    // D'abord une image sur 8 (aperçu rapide de tout le vol), puis le reste.
+    for (var s = 0; s < FRAME_COUNT; s += 8) load(s);
+    setTimeout(function () { for (var k = 0; k < FRAME_COUNT; k++) load(k); }, 300);
+
+    var size = function () {
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(canvas.clientWidth * dpr);
+      canvas.height = Math.round(canvas.clientHeight * dpr);
+      drawn = -1;
+    };
+    window.addEventListener("resize", size);
+    size();
+
+    var nearest = function (i) {
+      for (var d = 0; d < FRAME_COUNT; d++) {
+        if (frames[i - d] && frames[i - d].ready) return i - d;
+        if (frames[i + d] && frames[i + d].ready) return i + d;
+      }
+      return -1;
+    };
+    var tick = function () {
+      current += (frameTarget - current) * 0.18; // amorti : le film glisse au lieu de sauter
+      var f = nearest(Math.round(current));
+      if (f >= 0 && f !== drawn) {
+        var img = frames[f];
+        var cw = canvas.width, ch = canvas.height;
+        var sc = Math.max(cw / img.naturalWidth, ch / img.naturalHeight);
+        var w = img.naturalWidth * sc, h = img.naturalHeight * sc;
+        ctx.drawImage(img, (cw - w) / 2, (ch - h) / 2, w, h);
+        drawn = f;
+        canvas.classList.add("is-ready");
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  // Ordinateur : vidéos chargées en mémoire (blob) pour un défilement avant/arrière fluide.
   function loadVideo(l) {
-    if (l.video || reduced) return;
+    if (l.video || reduced || canvasMode) return;
     var v = document.createElement("video");
     v.muted = true; v.playsInline = true; v.preload = "auto";
     v.setAttribute("muted", ""); v.setAttribute("playsinline", "");
@@ -76,7 +137,10 @@
       var len = Math.max(1, l.ch.offsetHeight - (i === layers.length - 1 ? vh : 0));
       var p = Math.min(1, Math.max(0, (y - start) / len));
       l.target = p;
-      if (y >= start - 1) idx = i;
+      if (y >= start - 1) {
+        idx = i;
+        frameTarget = RANGES[i][0] + p * (RANGES[i][1] - RANGES[i][0]);
+      }
     });
     if (idx !== active) {
       layers.forEach(function (l, i) {
